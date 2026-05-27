@@ -1,6 +1,5 @@
 /**
- * 地铁站点 / 线路名的「仅展示」英文化。
- * 所有请求后端 A*、route-batch、站点介绍 API 等仍必须使用中文 canonical 名（与 GeoJSON / metro_adjacency 一致）。
+ * 地铁名「仅展示」英文化：与 GeoJSON / 邻接表一致的中文 canonical 名仍用于查路；本模块只影响界面字符串。
  */
 import stationData from './data/metroStationEnMap.json';
 
@@ -68,7 +67,7 @@ for (const [zh, en] of Object.entries(LINE_BASE_EN)) {
   EN_LINE_BASE_TO_ZH.set(en.toLowerCase(), zh);
 }
 
-/** 将可能的英文线路名还原为中文（仅用于颜色等内部逻辑）；已是中文则原样返回 */
+/** 英文界面下列车色仍按中文线表查：先把展示用英文名还原成中文主名，再交给配色逻辑。 */
 export function resolveLineKeyForPalette(raw: string): string {
   const t = String(raw || '').trim();
   if (!t) return t;
@@ -89,20 +88,25 @@ function lineBaseEnglishFallback(base: string): string {
   return b;
 }
 
+/**
+ * - zh：原样返回，与官方站名一致。
+ * - en：先查人工覆盖 STATION_EN_OVERRIDE，再查自动生成全表 STATION_EN；若站名以「站」结尾再尝试去后缀匹配。
+ * - 仍无译名时退回中文原文，避免界面出现空白或乱码占位。
+ */
 export function displayStationName(zh: string, lang: 'zh' | 'en'): string {
-  const z = String(zh || '').trim();
-  if (!z || lang === 'zh') return z;
-  if (STATION_EN_OVERRIDE[z]) return STATION_EN_OVERRIDE[z];
-  if (STATION_EN[z]) return STATION_EN[z];
+  const z = String(zh || '').trim(); // 统一成可比较的字符串
+  if (!z || lang === 'zh') return z; // 中文界面或未知名：不翻译
+  if (STATION_EN_OVERRIDE[z]) return STATION_EN_OVERRIDE[z]; // 课设/产品重点站的人工译名
+  if (STATION_EN[z]) return STATION_EN[z]; // 自动生成全表
   if (z.endsWith('站') && z.length > 1) {
-    const w = z.slice(0, -1);
+    const w = z.slice(0, -1); // 兼容「某某站」写法：再查「某某」
     if (STATION_EN_OVERRIDE[w]) return STATION_EN_OVERRIDE[w];
     if (STATION_EN[w]) return STATION_EN[w];
   }
-  return z;
+  return z; // 无匹配译名：保留中文，避免空白
 }
 
-/** 展示用：带括号的方向线名，如 地铁15号线(俸伯--清华东路西口) */
+/** 线名：如 地铁15号线(俸伯--清华东路西口) → 英文下列出 Line 15 并把括号内起讫站逐个译出。 */
 export function displayLineName(zh: string, lang: 'zh' | 'en'): string {
   const z = String(zh || '').trim();
   if (!z || lang === 'zh') return z;
@@ -119,7 +123,7 @@ export function displayLineName(zh: string, lang: 'zh' | 'en'): string {
   return lineBaseEnglishFallback(z);
 }
 
-/** 路线卡片起终点等自由文本：整串若在站点表中有则译，否则原样 */
+/** 卡片上的自由文本：能识别成站名则译，否则保持原文（如商圈名）。 */
 export function displayPlaceLabel(text: string, lang: 'zh' | 'en'): string {
   const z = String(text || '').trim();
   if (!z || lang === 'zh') return z;
@@ -131,7 +135,7 @@ export function displayPlaceLabel(text: string, lang: 'zh' | 'en'): string {
   return z;
 }
 
-/** 后端 title 形如「沙河高教园 -> 霍营」：英文界面下拆段并译站名 */
+/** 路线卡片标题：识别 -> / → /「到」，两端分别走站名展示翻译。 */
 export function displayRouteTitle(title: string, lang: 'zh' | 'en'): string {
   const raw = String(title || '').trim();
   if (!raw || lang === 'zh') return raw;

@@ -1286,11 +1286,11 @@ export default function App() {
       void tts.unlockAudio();
     }
     try {
-      const backendBase = getBackendBaseUrl(routeApiEndpoint);
+      const backendBase = getBackendBaseUrl(routeApiEndpoint); // 与路线 API 同源的后端根地址
       const resp = await fetch(`${backendBase}/api/llm/metro-intro-stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal: ac.signal,
+        signal: ac.signal, // 用户快速切换点击时中止上一次请求，避免文案错乱
         body: JSON.stringify({
           endpoint: apiEndpoint,
           apiKey,
@@ -1298,12 +1298,7 @@ export default function App() {
           targetType,
           targetName,
           ...(appLanguage === 'en'
-            ? {
-                targetDisplayEn:
-                  targetType === 'station'
-                    ? displayStationName(targetName, 'en')
-                    : displayLineName(targetName, 'en'),
-              }
+            ? { targetDisplayEn: targetType === 'station' ? displayStationName(targetName, 'en') : displayLineName(targetName, 'en') }
             : {}),
           language: appLanguage,
         }),
@@ -1833,6 +1828,7 @@ export default function App() {
     });
   }, [normalizeBrowserLocationToWgs84]);
 
+  /** 当前选中方案 → 地图线层 GeoJSON */
   const selectedRouteLineGeojson = useMemo((): FeatureCollection<Geometry, GeoJsonProperties> | null => {
     const route = shownRoutes[selectedRoute];
     const segmented = extractSegmentedRouteFeatures(route);
@@ -1852,19 +1848,25 @@ export default function App() {
       }
       if (stationCoords.length < 2) return seg;
 
-      const linePaths = linePathsByBaseName.get(lineBase) || [];
-      if (linePaths.length === 0) return { ...seg, coordinates: stationCoords };
+      /*
+       * 输入：本段上的站序坐标 stationCoords；该线在底图 GeoJSON 中的全部折线 linePaths。
+       * 若没有轨道几何 → 直接用站序折线兜底，保证至少能画线；若有 → 对相邻两站沿轨道插点。
+       * buildPolylineBetweenPoints 返回两站之间的子路径；拼接时第二段起去掉重复首点，整条线连续。
+       */
+      const linePaths = linePathsByBaseName.get(lineBase) || []; // 底图里该线别名的全部轨道折线
+      if (linePaths.length === 0) return { ...seg, coordinates: stationCoords }; // 无几何：站序直连兜底
 
       const rebuilt: [number, number][] = [];
       for (let i = 0; i < stationCoords.length - 1; i += 1) {
-        const part = buildPolylineBetweenPoints(linePaths, stationCoords[i], stationCoords[i + 1]);
+        const part = buildPolylineBetweenPoints(linePaths, stationCoords[i], stationCoords[i + 1]); // 沿轨插点
         if (part.length < 2) continue;
-        if (rebuilt.length > 0) rebuilt.push(...part.slice(1));
+        if (rebuilt.length > 0) rebuilt.push(...part.slice(1)); // 去重：第二段起跳过与上一段重合的首点
         else rebuilt.push(...part);
       }
       if (rebuilt.length >= 2) return { ...seg, coordinates: rebuilt };
       return { ...seg, coordinates: stationCoords };
     });
+    // 每段一条 LineString，属性里的颜色供线层与箭头符号层共用
     return {
       type: 'FeatureCollection',
       features: mapped.map(seg => ({
@@ -1885,6 +1887,7 @@ export default function App() {
     };
   }, [shownRoutes, selectedRoute, stationLineCoordLookup, linePathsByBaseName]);
 
+  /** 当前方案途经站 → 带线路色的点要素，与侧栏站名列表一一对应，便于用户「看图对字」。 */
   const selectedRouteStationsGeojson = useMemo((): FeatureCollection<Geometry, GeoJsonProperties> | null => {
     const route = shownRoutes[selectedRoute];
     if (!route || !Array.isArray(route.lineSegments) || route.lineSegments.length === 0) return null;
@@ -1970,19 +1973,25 @@ export default function App() {
     return { type: 'FeatureCollection', features };
   }, [shownRoutes, selectedRoute, stationLineCoordLookup]);
 
+  /*
+   * 做法：收集当前方案各段折线的全部顶点 → 算经纬度包围盒 → fitBounds 加内边距与动画时长。
+   * 侧栏小地图与全屏大地图共用本函数，由调用处传入不同的 Map 引用即可。
+   */
   const fitSelectedRouteOnMap = useCallback((mapRef: RefObject<MapRef | null>, routeIndex = selectedRoute) => {
+    // 获取当前选中的路线数据，并进行拆分合并等操作
     const route = shownRoutes[routeIndex];
     const segmented = extractSegmentedRouteFeatures(route);
     const coordinates = segmented.flatMap(s => s.coordinates);
     if (coordinates.length < 2 || !mapRef.current) return;
-    const b = boundsFromCoordinates(coordinates);
+    const b = boundsFromCoordinates(coordinates); // 计算所有坐标点的包围盒
     if (!b) return;
+    // 将地图视野调整到路线范围，设置内边距和动画时长
     mapRef.current.fitBounds(
       [[b.minLng, b.minLat], [b.maxLng, b.maxLat]],
-      { padding: { top: 40, bottom: 40, left: 40, right: 40 }, duration: 700 }
+      { padding: { top: 40, bottom: 40, left: 40, right: 40 }, duration: 700 } // 内边距防贴边；duration 为平滑动画毫秒
     );
   }, [shownRoutes, selectedRoute]);
-
+  // 切换路线时保存当前快照
   const handleRouteCardClick = useCallback((idx: number) => {
     if (idx !== selectedRoute) {
       pushConversationSnapshot();
@@ -2039,11 +2048,13 @@ export default function App() {
     if (selectedRoute >= shownRoutes.length) setSelectedRoute(0);
   }, [shownRoutes, selectedRoute]);
 
+  // 方案索引或数据变化 → 侧栏与（若已开）全屏地图同步缩放到整条路线
   useEffect(() => {
     fitSelectedRouteOnMap(sidebarMapRef);
     if (mapExpanded) fitSelectedRouteOnMap(fullscreenMapRef);
   }, [selectedRoute, shownRoutes, mapExpanded, fitSelectedRouteOnMap]);
 
+  // 全屏刚打开时地图容器尺寸可能尚未就绪：下一帧与短延时后各 fit 一次，避免视野跑偏
   useEffect(() => {
     if (!mapExpanded) return;
     const raf = requestAnimationFrame(() => fitSelectedRouteOnMap(fullscreenMapRef, selectedRoute));

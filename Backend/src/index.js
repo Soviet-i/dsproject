@@ -253,6 +253,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  /** 地铁文旅介绍流式接口 */
   if (req.method === "POST" && req.url === "/api/llm/metro-intro-stream") {
     readJsonBody(req, async (parseErr, data) => {
       if (parseErr) {
@@ -274,6 +275,7 @@ const server = http.createServer((req, res) => {
 
       let systemContent;
       let userContent;
+      // 站点 / 线路 × 界面语言 → 两套文案约束（篇幅、语气、禁止编造换乘细节等）
       if (targetType === "station") {
         if (language === "en") {
           const stationEn = targetDisplayEn || targetName;
@@ -326,6 +328,11 @@ const server = http.createServer((req, res) => {
         userContent = "请撰写介绍。";
       }
 
+      /*
+       * 调用上游 Chat Completions：system / user 已在上面按站点或线路、语言拼好。
+       * stream 为 true 时正文以 SSE 分片返回，由 forwardSseResponse 原样接到本响应，供前端边下边渲染。
+       * 若上游返回非 2xx，则读 body 尽量解析 JSON 里的错误信息，再统一用 sendJson 告知前端。
+       */
       try {
         const upstream = await callChatCompletion({
           endpoint,
@@ -336,33 +343,32 @@ const server = http.createServer((req, res) => {
             { role: "user", content: userContent }
           ],
           stream: true,
-          max_tokens: 960
+          max_tokens: 960 // 控制单次生成上限，避免侧栏介绍过长
         });
         if (!upstream.ok) {
           const text = await upstream.text().catch(() => "");
           let errMsg = `upstream HTTP ${upstream.status}`;
+          // 多数服务商返回 JSON 错误体；解析失败则退回纯文本前 300 字，避免把整页 HTML 塞进错误提示
           try {
             const j = JSON.parse(text);
             errMsg = j.error?.message || j.message || errMsg;
           } catch {
             if (text) errMsg = text.slice(0, 300);
           }
-          return sendJson(res, upstream.status >= 400 && upstream.status < 600 ? upstream.status : 502, {
-            requestId: buildRequestId(),
-            error: errMsg
-          });
+          const status = upstream.status >= 400 && upstream.status < 600 ? upstream.status : 502;
+          return sendJson(res, status, { requestId: buildRequestId(), error: errMsg });
         }
+        // 2xx：把上游可读流接到 res，不再二次缓冲整段正文
         return forwardSseResponse(upstream, res);
       } catch (err) {
-        return sendJson(res, 502, {
-          requestId: buildRequestId(),
-          error: err instanceof Error ? err.message : "metro-intro upstream failed"
-        });
+        // fetch 自身失败（网络、超时等），与上游 HTTP 错误分支区分
+        return sendJson(res, 502, { requestId: buildRequestId(), error: err instanceof Error ? err.message : "metro-intro upstream failed" });
       }
     });
     return;
   }
 
+  // route-batch：先让模型只输出 <query> 标签，再本地逐对算路，成功的进 routes，失败的进 skippedQueries
   if (req.method === "POST" && req.url === "/api/llm/route-batch") {
     readJsonBody(req, async (parseErr, data) => {
       if (parseErr) {
@@ -479,6 +485,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // 单次规划：前端侧栏/地图初次加载或用户指定起终点时调用
   if (req.method === "POST" && req.url === "/api/route") {
     readJsonBody(req, (parseErr, data) => {
       if (parseErr) {
