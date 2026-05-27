@@ -125,6 +125,12 @@ npm install
 npm run dev
 ```
 
+从《北京地铁站名掌故》更新知识图谱数据（需将 EPUB 解压目录放在仓库同级 `北京地铁站名掌故/OEBPS/Text`）：
+
+```bash
+node Backend/scripts/importCultureFromBook.mjs
+```
+
 ---
 
 ## 移动端局域网测试（内网热部署）

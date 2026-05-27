@@ -38,7 +38,9 @@ function normalizeStation(raw) {
     popularity: Number.isFinite(Number(raw && raw.popularity)) ? Number(raw.popularity) : 0,
     confidence: Number.isFinite(Number(raw && raw.confidence)) ? Number(raw.confidence) : 0,
     why_recommend: normalizeText(raw && raw.why_recommend),
-    line_affinity: normalizeTextArray(raw && raw.line_affinity)
+    line_affinity: normalizeTextArray(raw && raw.line_affinity),
+    book_source: normalizeText(raw && raw.book_source),
+    book_excerpt: normalizeText(raw && raw.book_excerpt)
   };
 }
 
@@ -191,8 +193,119 @@ function getSimilarStations(stationName, topK = 5) {
   };
 }
 
+function normalizeLineKeys(lineLabel) {
+  const src = normalizeText(lineLabel).replace(/^地铁/u, "");
+  const keys = new Set();
+  if (!src) return [];
+  const m = src.match(/(\d+)\s*号线/u);
+  if (m) keys.add(`${m[1]}号线`);
+  if (/八通/u.test(src)) keys.add("八通线");
+  if (/S1|磁悬浮/u.test(src)) keys.add("S1线");
+  if (/西郊|有轨/u.test(src)) keys.add("西郊线");
+  if (/大兴机场/u.test(src)) keys.add("大兴机场线");
+  if (/首都机场|机场线/u.test(src)) keys.add("首都机场线");
+  if (/亦庄/u.test(src)) keys.add("亦庄线");
+  if (/昌平/u.test(src)) keys.add("昌平线");
+  if (/房山/u.test(src)) keys.add("房山线");
+  if (/燕房/u.test(src)) keys.add("燕房线");
+  if (keys.size === 0 && src) keys.add(src);
+  return Array.from(keys);
+}
+
+function lineAffinityMatches(station, lineKeys) {
+  if (!lineKeys || lineKeys.length === 0) return false;
+  const aff = station.line_affinity || [];
+  return lineKeys.some(
+    (lineKey) =>
+      aff.some((a) => a === lineKey || a.includes(lineKey) || lineKey.includes(a))
+  );
+}
+
+function getStationByName(stationName) {
+  const c = ensureCache();
+  const key = normalizeText(stationName);
+  return c.byName.get(key) || null;
+}
+
+function getStationsByLine(lineLabel, limit = 12) {
+  const c = ensureCache();
+  const lineKeys = normalizeLineKeys(lineLabel);
+  if (lineKeys.length === 0) return [];
+  const matched = c.stations.filter((s) => lineAffinityMatches(s, lineKeys));
+  matched.sort(
+    (a, b) =>
+      (Number(b.popularity) || 0) - (Number(a.popularity) || 0) ||
+      a.station_name.localeCompare(b.station_name, "zh-Hans-CN")
+  );
+  const cap = Number.isFinite(Number(limit)) ? Math.max(1, Math.min(30, Number(limit))) : 12;
+  return matched.slice(0, cap);
+}
+
+function formatCultureContextForPrompt(station, language) {
+  if (!station) return "";
+  if (language === "en") {
+    return [
+      "## Knowledge graph (ground truth — prefer these facts)",
+      `Station (Chinese canonical): ${station.station_name}`,
+      `Summary: ${station.story_summary}`,
+      station.culture_tags?.length ? `Tags: ${station.culture_tags.join(", ")}` : "",
+      station.nearby_pois?.length ? `Nearby POIs: ${station.nearby_pois.join(", ")}` : "",
+      station.book_excerpt
+        ? `Book excerpt (condense; do not invent beyond this):\n${station.book_excerpt.slice(0, 1200)}`
+        : ""
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+  return [
+    "## 知识图谱参考（请优先采信，勿与下列史实矛盾）",
+    `站点：${station.station_name}`,
+    `分类：${(station.tree_path || []).join(" > ")}`,
+    `概要：${station.story_summary}`,
+    station.culture_tags?.length ? `标签：${station.culture_tags.join("、")}` : "",
+    station.nearby_pois?.length ? `周边参考：${station.nearby_pois.join("、")}` : "",
+    station.book_excerpt
+      ? `《北京地铁站名掌故》摘录（可改写润色，勿编造书中未提及的具体年代与人物细节）：\n${station.book_excerpt.slice(0, 1500)}`
+      : ""
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function formatLineCultureContextForPrompt(lineLabel, stations, language) {
+  if (!stations || stations.length === 0) return "";
+  const bullets = stations
+    .map((s) => {
+      const summary = (s.story_summary || "").slice(0, 120);
+      if (language === "en") {
+        return `- ${s.station_name}: ${summary}`;
+      }
+      return `- ${s.station_name}：${summary}`;
+    })
+    .join("\n");
+
+  if (language === "en") {
+    return [
+      "## Line knowledge graph (sample stations along this line)",
+      `Line label: ${lineLabel}`,
+      "Use these station facts when weaving a corridor overview; do not invent dates or transfers.",
+      bullets
+    ].join("\n");
+  }
+  return [
+    "## 线路知识图谱（沿线站点掌故摘要，撰写线路介绍时请参照）",
+    `线路：${lineLabel}`,
+    "以下摘自《北京地铁站名掌故》与站内知识图谱，可择要融入线路综述，勿编造无据细节。",
+    bullets
+  ].join("\n");
+}
+
 module.exports = {
   getCultureTree,
   getStationsByPath,
-  getSimilarStations
+  getSimilarStations,
+  getStationByName,
+  getStationsByLine,
+  formatCultureContextForPrompt,
+  formatLineCultureContextForPrompt
 };

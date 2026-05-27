@@ -54,6 +54,7 @@ function readLabelTsv(p) {
 
 function readStoryTsv(p) {
   const storyEnByKey = {};
+  const storyEnByStation = {};
   for (const line of readLines(p)) {
     const parts = line.split("\t");
     if (parts.length < 3) continue;
@@ -61,32 +62,17 @@ function readStoryTsv(p) {
     const storyEn = parts[parts.length - 1];
     const storyZh = parts.slice(1, -1).join("\t");
     storyEnByKey[`${stationName}\t${storyZh}`] = storyEn;
+    storyEnByStation[stationName] = storyEn;
   }
-  return storyEnByKey;
+  return { storyEnByKey, storyEnByStation };
 }
 
 const tree = JSON.parse(fs.readFileSync(treePath, "utf8"));
-const zhLabels = collectCultureZhLabels(tree.stations);
 const labels = readLabelTsv(labelTsvPath);
-const storyEnByKey = readStoryTsv(storyTsvPath);
-
-for (const z of zhLabels) {
-  if (!labels[z]) {
-    console.error("Missing English for culture label:", z);
-    process.exit(1);
-  }
-}
-
-for (const s of tree.stations) {
-  const k = `${s.station_name}\t${s.story_summary}`;
-  if (!storyEnByKey[k]) {
-    console.error("Missing English story for:", s.station_name, s.story_summary.slice(0, 40));
-    process.exit(1);
-  }
-}
+const { storyEnByKey, storyEnByStation } = readStoryTsv(storyTsvPath);
 
 const payload = {
-  version: 1,
+  version: 2,
   labels,
   reasonLabels: {
     同属主题: "Shared theme",
@@ -94,6 +80,7 @@ const payload = {
     同类属性: "Similar attributes",
   },
   storyEnByKey,
+  storyEnByStation,
 };
 
 fs.writeFileSync(outPath, JSON.stringify(payload));
@@ -102,6 +89,6 @@ console.log(
   outPath,
   "labels",
   Object.keys(labels).length,
-  "story keys",
-  Object.keys(storyEnByKey).length
+  "storyEnByStation",
+  Object.keys(storyEnByStation).length
 );

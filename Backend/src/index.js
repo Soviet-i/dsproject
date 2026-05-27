@@ -1,6 +1,14 @@
 const http = require("http");
 const { queryRoute, splitRouteEndpoints } = require("./queryRoute");
-const { getCultureTree, getStationsByPath, getSimilarStations } = require("./cultureService");
+const {
+  getCultureTree,
+  getStationsByPath,
+  getSimilarStations,
+  getStationByName,
+  getStationsByLine,
+  formatCultureContextForPrompt,
+  formatLineCultureContextForPrompt
+} = require("./cultureService");
 
 const PORT = process.env.PORT || 3000;
 
@@ -151,6 +159,19 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.method === "GET" && req.url.startsWith("/api/culture/station")) {
+    const u = new URL(req.url, "http://localhost");
+    const stationName = String(u.searchParams.get("name") || "").trim();
+    if (!stationName) {
+      return sendJson(res, 400, { requestId: buildRequestId(), error: "name query is required" });
+    }
+    const station = getStationByName(stationName);
+    if (!station) {
+      return sendJson(res, 404, { requestId: buildRequestId(), error: "station not found in culture graph" });
+    }
+    return sendJson(res, 200, { requestId: buildRequestId(), station });
+  }
+
   if (req.method === "POST" && req.url === "/api/culture/similar") {
     readJsonBody(req, (parseErr, data) => {
       if (parseErr) {
@@ -273,6 +294,15 @@ const server = http.createServer((req, res) => {
       }
       const targetDisplayEn = String(data.targetDisplayEn || "").trim();
 
+      const cultureStation =
+        targetType === "station" ? getStationByName(targetName) : null;
+      const cultureLineStations =
+        targetType === "line" ? getStationsByLine(targetName, 14) : [];
+      const cultureContextBlock =
+        targetType === "station"
+          ? formatCultureContextForPrompt(cultureStation, language)
+          : formatLineCultureContextForPrompt(targetName, cultureLineStations, language);
+
       let systemContent;
       let userContent;
       // 站点 / 线路 × 界面语言 → 两套文案约束（篇幅、语气、禁止编造换乘细节等）
@@ -303,6 +333,9 @@ const server = http.createServer((req, res) => {
           ].join("\n");
           userContent = "请撰写介绍。";
         }
+        if (cultureContextBlock) {
+          systemContent = `${systemContent}\n\n${cultureContextBlock}`;
+        }
       } else if (language === "en") {
         const lineEn = targetDisplayEn || targetName;
         systemContent = [
@@ -326,6 +359,9 @@ const server = http.createServer((req, res) => {
           "Markdown 可用；最多一个简短 `##` 小标题。"
         ].join("\n");
         userContent = "请撰写介绍。";
+      }
+      if (targetType === "line" && cultureContextBlock) {
+        systemContent = `${systemContent}\n\n${cultureContextBlock}`;
       }
 
       /*

@@ -139,6 +139,7 @@ type CultureExploreBundle = {
   labels: Record<string, string>;
   reasonLabels: Record<string, string>;
   storyEnByKey: Record<string, string>;
+  storyEnByStation?: Record<string, string>;
 };
 
 const CULTURE_EXPLORE = cultureExploreBundle as CultureExploreBundle;
@@ -146,7 +147,8 @@ const CULTURE_EXPLORE = cultureExploreBundle as CultureExploreBundle;
 function translateCultureToken(token: string, lang: 'zh' | 'en'): string {
   const raw = String(token || '').trim();
   if (!raw || lang === 'zh') return raw;
-  return CULTURE_EXPLORE.labels[raw] || raw;
+  const mapped = CULTURE_EXPLORE.labels[raw];
+  return mapped || '';
 }
 
 function translateCultureReason(reason: string, lang: 'zh' | 'en'): string {
@@ -167,8 +169,10 @@ function translateCultureReason(reason: string, lang: 'zh' | 'en'): string {
 function translateCultureSummary(stationName: string, summary: string, lang: 'zh' | 'en'): string {
   const raw = String(summary || '').trim();
   if (!raw || lang === 'zh') return raw;
+  const byStation = CULTURE_EXPLORE.storyEnByStation?.[stationName];
+  if (byStation) return byStation;
   const hit = CULTURE_EXPLORE.storyEnByKey[`${stationName}\t${raw}`];
-  return hit || raw;
+  return hit || '';
 }
 
 function cloneValue<T>(value: T): T {
@@ -2423,7 +2427,7 @@ export default function App() {
                   layout={{
                     'symbol-placement': 'line',
                     'symbol-spacing': 22,
-                    'text-field': '', // ⇨
+                    'text-field': '➠', // ⇨
                     'text-size': 22,
                     'text-font': ['Open Sans Semibold', 'Arial Unicode MS Regular'],
                     'text-allow-overlap': true,
@@ -2457,7 +2461,7 @@ export default function App() {
                   layout={{
                     'symbol-placement': 'line',
                     'symbol-spacing': 18,
-                    'text-field': '',
+                    'text-field': '➠',
                     'text-size': 18,
                     'text-font': ['Open Sans Semibold', 'Arial Unicode MS Regular'],
                     'text-allow-overlap': true,
@@ -2805,7 +2809,7 @@ export default function App() {
                 <h2>{t('文化探索', 'Culture explorer')}</h2>
                 <div className="explore-header-actions">
                   {culturePath.length > 0 && (
-                    <span className="explore-breadcrumb">{culturePath.map((p) => translateCultureToken(p, appLanguage)).join(' > ')}</span>
+                    <span className="explore-breadcrumb">{culturePath.map((p) => translateCultureToken(p, appLanguage)).filter(Boolean).join(' > ')}</span>
                   )}
                   <button
                     className="btn-secondary"
@@ -2832,8 +2836,11 @@ export default function App() {
                       <div key={`level-${depth}`} className="explore-level-block">
                         <div className="explore-level-title">{t(`第${depth + 1}层`, `Level ${depth + 1}`)}</div>
                         <div className="explore-chip-wrap">
-                          {levelNodes.map((node) => {
+                          {levelNodes
+                            .filter((node) => appLanguage === 'zh' || translateCultureToken(node.name, appLanguage))
+                            .map((node) => {
                             const active = culturePath[depth] === node.name;
+                            const nodeLabel = translateCultureToken(node.name, appLanguage);
                             return (
                               <button
                                 key={`${depth}-${node.name}`}
@@ -2844,7 +2851,7 @@ export default function App() {
                                   setExploreSimilarStations([]);
                                   setExploreSimilarError('');
                                 }}>
-                                <span>{translateCultureToken(node.name, appLanguage)}</span>
+                                <span>{nodeLabel}</span>
                                 <span className="explore-chip-count">{node.count}</span>
                               </button>
                             );
@@ -2878,10 +2885,17 @@ export default function App() {
                             key={station.station_name}
                             className={`explore-station-card ${selectedCultureStation === station.station_name ? 'active' : ''}`}>
                             <div className="explore-station-title">{displayStationName(station.station_name, appLanguage)}</div>
-                            <div className="explore-station-summary">{translateCultureSummary(station.station_name, station.story_summary, appLanguage) || t('暂无简介', 'No summary')}</div>
+                            <div className="explore-station-summary">
+                              {translateCultureSummary(station.station_name, station.story_summary, appLanguage)
+                                || (appLanguage === 'zh' ? t('暂无简介', 'No summary') : t('暂无英文简介（仅中文掌故）', 'No English summary (Chinese notes only)'))}
+                            </div>
                             <div className="explore-chip-wrap">
-                              {station.culture_tags.slice(0, 4).map((tag) => (
-                                <span key={`${station.station_name}-${tag}`} className="explore-mini-chip">{translateCultureToken(tag, appLanguage)}</span>
+                              {station.culture_tags
+                                .map((tag) => ({ tag, label: translateCultureToken(tag, appLanguage) }))
+                                .filter((item) => appLanguage === 'zh' || item.label)
+                                .slice(0, 4)
+                                .map(({ tag, label }) => (
+                                <span key={`${station.station_name}-${tag}`} className="explore-mini-chip">{label}</span>
                               ))}
                             </div>
                             <div className="explore-station-actions">
